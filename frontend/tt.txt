@@ -1,0 +1,113 @@
+┌─────────────────────────────────────────────────────────────────┐                                                                                                                         
+  │                        CLIENT REQUEST                           │                                                                                                                       
+  │                   (POST /api/upload or /api/query)              │                                                                                                                         
+  └─────────────────────────┬───────────────────────────────────────┘
+                            │                                                                                                                                                                 
+                            ▼                               
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                        main.py  (FastAPI)                       │
+  │                                                                 │
+  │  /api/upload                      /api/query                   │
+  │  ──────────                       ─────────                    │
+  │  1. Validate files                1. Look up session           │
+  │     (ext, size, count)            2. Call claude_service       │
+  │  2. parse_file() each             3. Execute agg code          │
+  │  3. create_session()              4. Inject real values        │
+  │  4. store DataFrames              5. Return QueryResponse      │
+  │  5. analyze_dataframe()                                        │
+  │  6. generate_starter_questions()                               │
+  │  7. Return UploadResponse                                      │
+  └──────┬────────────────────────────────┬───────────────────────┘
+         │                                │
+         ▼                                ▼
+  ┌─────────────┐              ┌──────────────────────────────────┐
+  │  parser.py  │              │         claude_service.py        │
+  │             │              │                                  │
+  │ • chardet   │              │ • Build system prompt            │
+  │   encoding  │              │   (schema + DF names injected)   │
+  │   detection │              │ • Build message history          │
+  │ • CSV multi-│              │ • call_bedrock()                 │
+  │   delimiter │              │   → boto3 invoke_model           │
+  │   sniffing  │              │   → exponential backoff retry    │
+  │ • XLSX via  │              │ • _parse_response()              │
+  │   openpyxl  │              │   → extract { ... } from raw    │
+  │ • dtype     │              │   → json.loads                   │
+  │   inference │              │   → fallback on parse error      │
+  │ • col name  │              │ • _inject_result_value()         │
+  │   sanitize  │              │   → replace RESULT_VALUE         │
+  └──────┬──────┘              │   placeholder with real scalar   │
+         │                     └────────────────┬─────────────────┘
+         ▼                                      │
+  ┌──────────────────┐                         ▼
+  │ schema_analyzer  │              ┌──────────────────────────┐
+  │     .py          │              │     code_executor.py     │
+  │                  │              │                          │
+  │ • semantic type  │              │ • AST security scan      │
+  │   detection      │              │   (whitelist imports,    │
+  │   (numeric /     │              │    blacklist: os, sys,   │
+  │    categorical / │              │    subprocess, eval…)    │
+  │    datetime /    │              │ • Serialize DFs to JSON  │
+  │    text)         │              │ • Spawn subprocess       │
+  │ • null %, unique │              │   (isolated execution)   │
+  │   count, stats   │              │ • 30s timeout watchdog   │
+  │ • top_values     │              │ • Deserialize result     │
+  │ • generate       │              │   (DataFrame / Series /  │
+  │   starter Qs     │              │    scalar / dict / error)│
+  └──────────────────┘              └──────────────────────────┘
+                                               │
+         ┌─────────────────────────────────────┘
+         ▼
+  ┌──────────────────┐
+  │ session_store.py │
+  │                  │
+  │ • UUID sessions  │
+  │ • Stores DFs     │
+  │   in memory      │
+  │ • Conversation   │
+  │   history log    │
+  │ • 24h TTL        │
+  │ • Thread-safe    │
+  │   Lock           │
+  │ • Hourly cleanup │
+  │   background task│
+  └──────────────────┘
+
+  ---
+  Request flows
+
+  Upload flow
+
+  Client → main.py → parser.py (decode + clean DF)
+                   → session_store.py (create session, store DFs)
+                   → schema_analyzer.py (stats + starter questions)
+                   ← UploadResponse (session_id, schema, questions)
+
+  Query flow
+
+  Client → main.py → session_store.py (get session + DFs)
+                   → claude_service.py (system prompt + history → Bedrock)
+                   → code_executor.py (AST check → subprocess → result)
+                   → _inject_result_value() (replace RESULT_VALUE placeholder)
+                   → session_store.py (append to history)
+                   ← QueryResponse (chat_message, artifact HTML, insight)
+
+  ---
+  Key design decisions
+
+  ┌─────────────────────────────┬────────────────────────────────────────────────────────────────────┐
+  │          Decision           │                               Reason                               │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ In-memory sessions          │ MVP simplicity — no DB dependency                                  │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Subprocess execution        │ Isolates user code from server process                             │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ AST validation before exec  │ Blocks dangerous ops before subprocess even spawns                 │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ RESULT_VALUE placeholder    │ Claude never invents numbers — real value injected after execution │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Schema injected into prompt │ Claude knows column names, types, stats without seeing raw data    │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Conversation history        │ Enables follow-up questions with full context                      │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────┤
+  │ chardet + multi-delimiter   │ Handles real-world messy CSV files reliably                        │
+  └─────────────────────────────┴────────────────────────────────────────────────────────────────────┘

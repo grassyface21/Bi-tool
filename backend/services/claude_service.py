@@ -62,33 +62,27 @@ def call_bedrock(messages: list[dict], system_prompt: str, retries: int = 3) -> 
     raise last_error
 
 
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are an expert Business Intelligence analyst with deep knowledge of pandas and data visualization.
+You are an expert Business Intelligence analyst. You answer questions by writing \
+SQL queries (SQLite dialect) against the user's data and presenting results clearly.
 
 ════════════════════════════════════════════════════════
 OUTPUT FORMAT — MANDATORY
 ════════════════════════════════════════════════════════
 Your ENTIRE response must be ONE valid JSON object.
 - No text before or after the JSON
-- No markdown, no code fences, no explanations
-- All JSON values must be JSON literals (strings, numbers, booleans, null, arrays, objects)
-- Python code lives ONLY inside the "aggregation_code" string — nowhere else
-- NEVER put Python expressions or variable names as JSON values
+- No markdown fences, no explanations outside the JSON
+- All values must be JSON literals (strings, numbers, booleans, null, arrays, objects)
 
-FORBIDDEN (breaks the system):
-  {{"total": round(total_revenue, 2)}}   ← Python expression as a JSON value
-
-CORRECT:
-  {{"aggregation_code": "result = df['revenue'].sum()"}}   ← Python as a string value
-
-════════════════════════════════════════════════════════
-JSON SCHEMA
-════════════════════════════════════════════════════════
+JSON SCHEMA:
 {{
-  "output_type": "metric | text | table | chart | dashboard | follo wup",
+  "output_type": "metric | text | table | chart | dashboard | followup",
   "render_mode": "chat | artifact",
-  "aggregation_code": "<python string> | null",
+  "sql_query": "<SQL string> | [<SQL string>, ...] | null",
   "chat_message": "<plain English — 1-3 sentences>",
   "artifact": {{ "type": "html", "content": "<complete HTML string>" }} | null,
   "insight": "<exactly 2 sentences>"
@@ -100,51 +94,59 @@ DECISION RULES
 
 1. output_type
    metric    → single computed number (sum, count, average, %)
-   text      → qualitative answer, no computation needed
-   table     → top-N list, comparison, multi-row result
+   text      → qualitative / factual answer, no computation needed
+   table     → list, comparison, ranked result, multi-row output
    chart     → one visualisation
-   dashboard → multiple KPI cards + charts combined
-   followup  → query is ambiguous, ask for clarification
+   dashboard → KPI cards + one or more charts combined
+   followup  → query is ambiguous — ask for clarification
 
 2. render_mode
-   chat     → metrics, short text, tables < 5 rows
-   artifact → charts, dashboards, tables ≥ 5 rows, formatted reports
+   chat     → metric, short text, tables < 5 rows
+   artifact → chart, dashboard, table ≥ 5 rows, formatted reports
 
-3. aggregation_code
-   - Write pandas code when data computation is required
-   - Available DataFrames: {dataframe_names}
-   - Code MUST assign final result to a variable named `result`
-   - For metrics:    result = df['col'].sum()
-   - For tables:     result = df.groupby('a')['b'].sum().reset_index()
-   - For charts:     result = df.groupby('a')['b'].sum().reset_index().to_dict(orient='records')
-   - Set null if no computation needed (pure text answers)
+3. sql_query rules
+   - Write SQLite-dialect SELECT (or WITH … SELECT) statements
+   - Available tables: {table_names}
+   - ALWAYS compute aggregates correctly — e.g. revenue = SUM(price * quantity)
+   - For dates: use strftime('%Y-%m', date_col) for month grouping
+   - For top-N: add ORDER BY … DESC LIMIT N
+   - For string columns: use LOWER() / TRIM() when comparing user input
+   - Single query  → sql_query is a string     → placeholder: __SQL_RESULT_JSON__
+   - Multiple queries (dashboard) → sql_query is an array → placeholders: __SQL_RESULT_0__, __SQL_RESULT_1__, …
+   - Set null only for pure text answers that need zero computation
 
-4. chat_message for metrics
-   - Use "RESULT_VALUE" as a placeholder — the backend will replace it with the real computed value
-   - Example: "The total revenue is RESULT_VALUE."
-   - Example: "There are RESULT_VALUE unique products in the dataset."
+4. RESULT_VALUE placeholder  (metric only)
+   - Write RESULT_VALUE in chat_message where the number belongs
+   - The backend replaces it with the real computed value
+   - Example: "Total revenue across all stores is RESULT_VALUE."
 
-5. artifact HTML (when render_mode = "artifact")
-   - Complete self-contained HTML — no external data fetches
-   - Use schema statistics (min, max, mean, top_values, sample_values) to build representative charts
-   - Embed ALL data as inline JS constants — no Python variables in HTML
-   - CDN: https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js
-   - Fonts: https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap
-   - Color palette:
-       background  #0a0b0f   surface  #111318   accent   #e8ff47
-       text        #f0f2f8   muted    #7a8099   border   #1f2937
-   - Fonts: headings → Bebas Neue, body → DM Sans, numbers → DM Mono
-   - Charts: maintainAspectRatio: false, container height in CSS
-   - Style: border-radius 12px, box-shadow, hover effects
-   - Dashboards: CSS grid, metric KPI cards on top row, charts below
+5. __SQL_RESULT_JSON__ / __SQL_RESULT_N__ placeholders  (chart, table, dashboard)
+   - In artifact HTML embed: const DATA = __SQL_RESULT_JSON__;
+   - For dashboard arrays embed: const DATA0 = __SQL_RESULT_0__; const DATA1 = __SQL_RESULT_1__;
+   - The backend replaces the placeholder with the real JSON array at runtime
+   - Build ALL Chart.js code using DATA — NEVER hardcode data values in the HTML
+   - Dashboard KPI query returns ONE row with named columns; use DATA[0].column_name
 
 6. insight
    - Exactly 2 sentences
    - Sentence 1: what the data shows
-   - Sentence 2: actionable business recommendation
+   - Sentence 2: one actionable business recommendation
 
 ════════════════════════════════════════════════════════
-DATA SCHEMA
+ARTIFACT HTML STYLE GUIDE
+════════════════════════════════════════════════════════
+- Complete self-contained HTML — no external data fetches
+- CDN: https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js
+- Fonts: https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap
+- Color palette: background #f5f7fa | surface #ffffff | accent #6366f1 | text #111827 | muted #6b7280 | border #e5e7eb
+- Fonts: headings → Bebas Neue  |  body → DM Sans  |  numbers/code → DM Mono
+- Charts: maintainAspectRatio: false, explicit container height in CSS
+- Cards: border-radius 12px, box-shadow 0 2px 12px rgba(0,0,0,0.08)
+- Dashboards: CSS grid, KPI cards on top row, charts below
+- Tables: styled <table> with sticky header, hover rows, number columns right-aligned
+
+════════════════════════════════════════════════════════
+DATABASE SCHEMA
 ════════════════════════════════════════════════════════
 {schema}
 
@@ -157,24 +159,38 @@ Query: "What is total revenue?"
 {{
   "output_type": "metric",
   "render_mode": "chat",
-  "aggregation_code": "result = df_sales['revenue'].sum()",
-  "chat_message": "The total revenue is RESULT_VALUE.",
+  "sql_query": "SELECT SUM(price * quantity) AS total_revenue FROM df_sales",
+  "chat_message": "The total revenue across all products and stores is RESULT_VALUE.",
   "artifact": null,
-  "insight": "Total revenue is the primary business health indicator. Tracking monthly trends against this baseline will highlight growth or decline early."
+  "insight": "Total revenue is the primary business health indicator. Monitoring monthly trends against this figure will surface growth opportunities and early warning signs."
+}}
+
+── TABLE ──
+Query: "List all items with total revenue over 10000"
+{{
+  "output_type": "table",
+  "render_mode": "artifact",
+  "sql_query": "SELECT product_id, product_name, category, subcategory, ROUND(SUM(price * quantity), 2) AS total_revenue FROM df_sales GROUP BY product_id, product_name, category, subcategory HAVING total_revenue > 10000 ORDER BY total_revenue DESC",
+  "chat_message": "Here is the full list of products with total revenue exceeding $10,000, sorted highest to lowest.",
+  "artifact": {{
+    "type": "html",
+    "content": "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>High-Revenue Items</title><link href='https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap' rel='stylesheet'><style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#f5f7fa;color:#111827;font-family:'DM Sans',sans-serif;padding:24px}}.card{{background:#ffffff;border-radius:12px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.08)}}.title{{font-family:'Bebas Neue',sans-serif;font-size:28px;color:#6366f1;margin-bottom:16px}}table{{width:100%;border-collapse:collapse}}th{{background:#e5e7eb;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:10px 14px;text-align:left}}td{{padding:10px 14px;border-bottom:1px solid #e5e7eb;font-size:14px}}.num{{font-family:'DM Mono',monospace;text-align:right;color:#6366f1}}tr:hover td{{background:rgba(232,255,71,.04)}}.badge{{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:#e5e7eb}}</style></head><body><div class='card'><div class='title'>Items with Total Revenue &gt; $10,000</div><table id='tbl'><thead><tr><th>#</th><th>Product ID</th><th>Product Name</th><th>Category</th><th>Subcategory</th><th style='text-align:right'>Total Revenue</th></tr></thead><tbody id='tbody'></tbody></table></div><script>const DATA=__SQL_RESULT_JSON__;const tbody=document.getElementById('tbody');DATA.forEach((r,i)=>{{const tr=document.createElement('tr');tr.innerHTML=`<td style='color:#6b7280'>${{i+1}}</td><td style='font-family:DM Mono,monospace'>${{r.product_id||''}}</td><td style='font-weight:500'>${{r.product_name||''}}</td><td><span class='badge'>${{r.category||''}}</span></td><td style='color:#6b7280'>${{r.subcategory||''}}</td><td class='num'>${{Number(r.total_revenue).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}})}}</td>`;tbody.appendChild(tr);}});</script></body></html>"
+  }},
+  "insight": "The top revenue-generating products span multiple categories, indicating a diversified customer base. Prioritising stock availability and targeted promotions for these items will protect and grow the highest-value revenue streams."
 }}
 
 ── CHART ──
-Query: "Show revenue by region as a bar chart"
+Query: "Show revenue by category as a bar chart"
 {{
   "output_type": "chart",
   "render_mode": "artifact",
-  "aggregation_code": "result = df_sales.groupby('region')['revenue'].sum().sort_values(ascending=False).reset_index().to_dict(orient='records')",
-  "chat_message": "Here is a bar chart showing revenue broken down by region.",
+  "sql_query": "SELECT category, ROUND(SUM(price * quantity), 2) AS revenue FROM df_sales GROUP BY category ORDER BY revenue DESC",
+  "chat_message": "Here is revenue broken down by category, sorted from highest to lowest.",
   "artifact": {{
     "type": "html",
-    "content": "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>Revenue by Region</title><link href='https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap' rel='stylesheet'><script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js'></script><style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#0a0b0f;color:#f0f2f8;font-family:'DM Sans',sans-serif;padding:24px}}.card{{background:#111318;border-radius:12px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,.4)}}.title{{font-family:'Bebas Neue',sans-serif;font-size:28px;color:#e8ff47;margin-bottom:16px}}.chart-wrap{{position:relative;height:380px}}</style></head><body><div class='card'><div class='title'>Revenue by Region</div><div class='chart-wrap'><canvas id='c'></canvas></div></div><script>const d=[{{r:'North',v:980000}},{{r:'South',v:720000}},{{r:'East',v:540000}},{{r:'West',v:430000}}];new Chart(document.getElementById('c'),{{type:'bar',data:{{labels:d.map(x=>x.r),datasets:[{{data:d.map(x=>x.v),backgroundColor:'#e8ff47',borderRadius:6,hoverBackgroundColor:'#f5ff8a'}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:(c)=>'$'+c.parsed.y.toLocaleString()}}}}}},scales:{{y:{{grid:{{color:'#1f2937'}},ticks:{{color:'#7a8099',callback:(v)=>'$'+v.toLocaleString()}}}},x:{{grid:{{display:false}},ticks:{{color:'#7a8099'}}}}}}}}}})</script></body></html>"
+    "content": "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>Revenue by Category</title><link href='https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap' rel='stylesheet'><script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js'><\\/script><style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#f5f7fa;color:#111827;font-family:'DM Sans',sans-serif;padding:24px}}.card{{background:#ffffff;border-radius:12px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.08)}}.title{{font-family:'Bebas Neue',sans-serif;font-size:28px;color:#6366f1;margin-bottom:16px}}.chart-wrap{{position:relative;height:400px}}</style></head><body><div class='card'><div class='title'>Revenue by Category</div><div class='chart-wrap'><canvas id='c'></canvas></div></div><script>const DATA=__SQL_RESULT_JSON__;new Chart(document.getElementById('c'),{{type:'bar',data:{{labels:DATA.map(d=>d.category),datasets:[{{data:DATA.map(d=>d.revenue),backgroundColor:'#6366f1',borderRadius:6,hoverBackgroundColor:'#818cf8'}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>'$'+c.parsed.y.toLocaleString()}}}}}},scales:{{y:{{grid:{{color:'#e5e7eb'}},ticks:{{color:'#6b7280',callback:v=>'$'+Number(v).toLocaleString()}}}},x:{{grid:{{display:false}},ticks:{{color:'#6b7280'}}}}}}}}}});<\\/script></body></html>"
   }},
-  "insight": "North region leads revenue generation, contributing the largest share. Replicating North's strategies — particularly product mix and pricing — in underperforming regions could unlock significant growth."
+  "insight": "The leading category contributes disproportionately to total revenue, suggesting strong category loyalty. Replicating its product mix and pricing strategy in lower-performing categories could unlock significant incremental growth."
 }}
 
 ── DASHBOARD ──
@@ -182,13 +198,16 @@ Query: "Give me a summary dashboard"
 {{
   "output_type": "dashboard",
   "render_mode": "artifact",
-  "aggregation_code": "import pandas as pd\\nmetrics = {{\\n  'total_revenue': round(float(df_sales['revenue'].sum()), 2),\\n  'total_orders': int(len(df_sales)),\\n  'avg_order_value': round(float(df_sales['revenue'].mean()), 2),\\n  'unique_customers': int(df_sales['customer_id'].nunique()) if 'customer_id' in df_sales.columns else 0\\n}}\\nrev_by_cat = df_sales.groupby('category')['revenue'].sum().sort_values(ascending=False).head(5).reset_index()\\nresult = {{'metrics': metrics, 'rev_by_cat': rev_by_cat.to_dict(orient='records')}}",
-  "chat_message": "I've built a summary dashboard with key KPIs and a revenue breakdown by category.",
+  "sql_query": [
+    "SELECT COUNT(*) AS total_orders, ROUND(SUM(price * quantity),2) AS total_revenue, ROUND(AVG(price * quantity),2) AS avg_order_value, COUNT(DISTINCT product_id) AS unique_products FROM df_sales",
+    "SELECT category, ROUND(SUM(price * quantity),2) AS revenue FROM df_sales GROUP BY category ORDER BY revenue DESC LIMIT 6"
+  ],
+  "chat_message": "Here is a summary dashboard with key KPIs and a revenue breakdown by category.",
   "artifact": {{
     "type": "html",
-    "content": "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>Dashboard</title><link href='https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap' rel='stylesheet'><script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js'></script><style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#0a0b0f;color:#f0f2f8;font-family:'DM Sans',sans-serif;padding:24px;display:flex;flex-direction:column;gap:20px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}}.kpi{{background:#111318;border-radius:12px;padding:20px;box-shadow:0 4px 24px rgba(0,0,0,.4)}}.kpi-label{{font-size:12px;color:#7a8099;text-transform:uppercase;letter-spacing:.05em}}.kpi-value{{font-family:'DM Mono',monospace;font-size:28px;color:#e8ff47;margin-top:6px}}.card{{background:#111318;border-radius:12px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,.4)}}.title{{font-family:'Bebas Neue',sans-serif;font-size:24px;color:#e8ff47;margin-bottom:16px}}.chart-wrap{{position:relative;height:320px}}</style></head><body><div class='grid'><div class='kpi'><div class='kpi-label'>Total Revenue</div><div class='kpi-value'>$2.45M</div></div><div class='kpi'><div class='kpi-label'>Total Orders</div><div class='kpi-value'>12,430</div></div><div class='kpi'><div class='kpi-label'>Avg Order Value</div><div class='kpi-value'>$197</div></div><div class='kpi'><div class='kpi-label'>Unique Customers</div><div class='kpi-value'>3,280</div></div></div><div class='card'><div class='title'>Revenue by Category</div><div class='chart-wrap'><canvas id='c'></canvas></div></div><script>const d=[{{l:'Electronics',v:820000}},{{l:'Clothing',v:540000}},{{l:'Food',v:430000}},{{l:'Home',v:380000}},{{l:'Sports',v:280000}}];new Chart(document.getElementById('c'),{{type:'bar',data:{{labels:d.map(x=>x.l),datasets:[{{data:d.map(x=>x.v),backgroundColor:'#e8ff47',borderRadius:6,hoverBackgroundColor:'#f5ff8a'}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}}}},scales:{{y:{{grid:{{color:'#1f2937'}},ticks:{{color:'#7a8099',callback:(v)=>'$'+v.toLocaleString()}}}},x:{{grid:{{display:false}},ticks:{{color:'#7a8099'}}}}}}}}}})</script></body></html>"
+    "content": "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>Dashboard</title><link href='https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap' rel='stylesheet'><script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js'><\\/script><style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#f5f7fa;color:#111827;font-family:'DM Sans',sans-serif;padding:24px;display:flex;flex-direction:column;gap:20px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}}.kpi{{background:#ffffff;border-radius:12px;padding:20px;box-shadow:0 2px 12px rgba(0,0,0,.08)}}.kpi-label{{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.06em}}.kpi-value{{font-family:'DM Mono',monospace;font-size:26px;color:#6366f1;margin-top:6px}}.card{{background:#ffffff;border-radius:12px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.08)}}.title{{font-family:'Bebas Neue',sans-serif;font-size:24px;color:#6366f1;margin-bottom:16px}}.chart-wrap{{position:relative;height:320px}}</style></head><body><div class='grid' id='kpis'></div><div class='card'><div class='title'>Revenue by Category</div><div class='chart-wrap'><canvas id='c'></canvas></div></div><script>const DATA0=__SQL_RESULT_0__;const DATA1=__SQL_RESULT_1__;const m=DATA0[0]||{{}};const fmt=v=>v==null?'N/A':Number(v).toLocaleString('en-US',{{maximumFractionDigits:0}});const fmtC=v=>v==null?'N/A':'$'+Number(v).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});const kpis=[['Total Revenue',fmtC(m.total_revenue)],['Total Orders',fmt(m.total_orders)],['Avg Order Value',fmtC(m.avg_order_value)],['Unique Products',fmt(m.unique_products)]];const grid=document.getElementById('kpis');kpis.forEach(([l,v])=>{{const d=document.createElement('div');d.className='kpi';d.innerHTML=`<div class='kpi-label'>${{l}}</div><div class='kpi-value'>${{v}}</div>`;grid.appendChild(d);}});new Chart(document.getElementById('c'),{{type:'bar',data:{{labels:DATA1.map(d=>d.category),datasets:[{{data:DATA1.map(d=>d.revenue),backgroundColor:'#6366f1',borderRadius:6,hoverBackgroundColor:'#818cf8'}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>'$'+c.parsed.y.toLocaleString()}}}}}},scales:{{y:{{grid:{{color:'#e5e7eb'}},ticks:{{color:'#6b7280',callback:v=>'$'+Number(v).toLocaleString()}}}},x:{{grid:{{display:false}},ticks:{{color:'#6b7280'}}}}}}}}}});<\\/script></body></html>"
   }},
-  "insight": "Revenue is concentrated in top categories, suggesting strong category leadership. Expanding mid-tier categories with targeted promotions could diversify revenue risk and improve overall margins."
+  "insight": "Revenue is concentrated in a small number of top categories, indicating strong category leadership. Expanding mid-tier categories with targeted promotions could diversify revenue risk and improve overall margins."
 }}"""
 
 
@@ -196,10 +215,9 @@ Query: "Give me a summary dashboard"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_system_prompt(schema: dict, dataframe_names: list[str]) -> str:
-    schema_str = json.dumps(schema, indent=2, default=str)
-    df_names_str = ", ".join(dataframe_names) if dataframe_names else "none"
-    return SYSTEM_PROMPT_TEMPLATE.format(schema=schema_str, dataframe_names=df_names_str)
+def _build_system_prompt(sql_schema: str, table_names: list[str]) -> str:
+    table_names_str = ", ".join(table_names) if table_names else "none"
+    return SYSTEM_PROMPT_TEMPLATE.format(schema=sql_schema, table_names=table_names_str)
 
 
 def _build_messages(conversation_history: list[dict], query: str) -> list[dict]:
@@ -214,7 +232,56 @@ def _build_messages(conversation_history: list[dict], query: str) -> list[dict]:
     return messages
 
 
-def _parse_response(raw: str) -> dict[str, Any]:
+def _repair_json(raw: str) -> str:
+    """
+    Fix the most common LLM JSON issue: literal newlines / tabs / control
+    characters inside string values (which makes json.loads raise
+    'Invalid control character').  Walks the string char-by-char, tracks
+    whether we are inside a JSON string, and escapes any bare control chars.
+    """
+    result: list[str] = []
+    in_string = False
+    escape_next = False
+
+    for ch in raw:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+            continue
+
+        if ch == "\\":
+            result.append(ch)
+            escape_next = True
+            continue
+
+        if ch == '"':
+            result.append(ch)
+            in_string = not in_string
+            continue
+
+        if in_string:
+            if ch == "\n":
+                result.append("\\n")
+            elif ch == "\r":
+                result.append("\\r")
+            elif ch == "\t":
+                result.append("\\t")
+            elif ord(ch) < 0x20:
+                # Other control characters — drop them
+                pass
+            else:
+                result.append(ch)
+        else:
+            result.append(ch)
+
+    return "".join(result)
+
+
+def _parse_response(raw: str) -> tuple[dict[str, Any], bool]:
+    """
+    Parse the LLM response string into a structured dict.
+    Returns (parsed_dict, success: bool).
+    """
     raw = raw.strip()
 
     # Strip markdown fences
@@ -223,58 +290,65 @@ def _parse_response(raw: str) -> dict[str, Any]:
         inner = lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:]
         raw = "\n".join(inner).strip()
 
-    # Extract the JSON object — find the outermost { ... }
+    # Extract the outermost JSON object — handles preamble text
     start = raw.find("{")
     end = raw.rfind("}")
     if start != -1 and end != -1 and end > start:
-        raw = raw[start : end + 1]
+        raw = raw[start: end + 1]
 
+    # First attempt: parse as-is
     try:
         data = json.loads(raw)
+        return _with_defaults(data), True
     except json.JSONDecodeError as e:
-        logger.warning(f"JSON parse failed ({e}). Raw[:300]: {raw[:300]}")
-        data = {
-            "output_type": "text",
-            "render_mode": "chat",
-            "aggregation_code": None,
-            "chat_message": "I had trouble formatting my response. Please try rephrasing your question.",
-            "artifact": None,
-            "insight": "",
-        }
+        logger.warning(f"JSON parse failed ({e}). Attempting repair…")
 
-    # Ensure all required fields exist
+    # Second attempt: repair control characters then parse
+    try:
+        data = json.loads(_repair_json(raw))
+        logger.info("JSON repaired and parsed successfully.")
+        return _with_defaults(data), True
+    except json.JSONDecodeError as e:
+        logger.warning(f"JSON repair failed ({e}). Raw[:400]: {raw[:400]}")
+        return _with_defaults({}), False
+
+
+def _with_defaults(data: dict) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "output_type": "text",
         "render_mode": "chat",
-        "aggregation_code": None,
+        "sql_query": None,
         "chat_message": "",
         "artifact": None,
         "insight": "",
     }
     for k, v in defaults.items():
         data.setdefault(k, v)
-
     return data
 
 
-def _inject_result_value(chat_message: str, execution_result: dict | None) -> str:
-    """Replace the RESULT_VALUE placeholder with the real computed scalar."""
-    if "RESULT_VALUE" not in chat_message or execution_result is None:
+def inject_result_into_message(chat_message: str, execution_bundle: dict | None) -> str:
+    """Replace RESULT_VALUE in chat_message with the real scalar from __default__ query."""
+    if "RESULT_VALUE" not in chat_message or execution_bundle is None:
         return chat_message
 
-    result_type = execution_result.get("type")
-    value = execution_result.get("data")
+    results = execution_bundle.get("results", {})
+    result = results.get("__default__")
+    if result is None:
+        return chat_message
+
+    result_type = result.get("type")
+    value = result.get("data")
 
     if result_type == "scalar" and value is not None:
-        # Format nicely: integer vs float
         if isinstance(value, float) and value == int(value):
             formatted = f"{int(value):,}"
         elif isinstance(value, float):
             formatted = f"{value:,.2f}"
+        elif isinstance(value, int):
+            formatted = f"{value:,}"
         else:
-            formatted = f"{value:,}" if isinstance(value, int) else str(value)
-    elif result_type == "series" and isinstance(value, dict):
-        formatted = str(value)
+            formatted = str(value)
     else:
         return chat_message
 
@@ -287,20 +361,31 @@ def _inject_result_value(chat_message: str, execution_result: dict | None) -> st
 
 async def process_query(
     query: str,
-    schema: dict,
+    sql_schema: str,
     conversation_history: list[dict],
-    dataframe_names: list[str],
-    execution_result: dict | None = None,
+    table_names: list[str],
+    max_parse_retries: int = 2,
 ) -> dict[str, Any]:
-    system_prompt = _build_system_prompt(schema, dataframe_names)
+    """
+    Call Bedrock and parse the response.
+    If JSON parsing fails, automatically retries up to max_parse_retries times
+    before returning a fallback error message — so the user never sees the
+    'trouble formatting' message due to a transient LLM output glitch.
+    """
+    system_prompt = _build_system_prompt(sql_schema, table_names)
     messages = _build_messages(conversation_history, query)
-    raw = call_bedrock(messages, system_prompt)
-    parsed = _parse_response(raw)
 
-    # Replace RESULT_VALUE placeholder now that we have real computed data
-    if execution_result:
-        parsed["chat_message"] = _inject_result_value(
-            parsed.get("chat_message", ""), execution_result
-        )
+    last_parsed: dict[str, Any] = {}
+    for attempt in range(1 + max_parse_retries):
+        raw = call_bedrock(messages, system_prompt)
+        parsed, ok = _parse_response(raw)
+        if ok:
+            return parsed
+        last_parsed = parsed
+        logger.warning(f"JSON parse failed on attempt {attempt + 1}, retrying…")
 
-    return parsed
+    # All retries exhausted — return a graceful fallback
+    last_parsed["chat_message"] = (
+        "I had trouble structuring my response. Please try again or rephrase your question."
+    )
+    return last_parsed

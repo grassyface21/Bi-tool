@@ -1,5 +1,6 @@
 import uuid
 import time
+import sqlite3
 import threading
 import logging
 from typing import Optional
@@ -17,6 +18,11 @@ class SessionData:
         self.last_accessed: float = time.time()
         self.dataframes: dict[str, pd.DataFrame] = {}
         self.schema: dict = {}
+        # SQL schema string (CREATE TABLE + stats + sample rows) for LLM prompt
+        self.sql_schema: str = ""
+        # In-memory SQLite database — single connection shared across queries
+        self.sqlite_conn: Optional[sqlite3.Connection] = None
+        self.sqlite_lock: threading.Lock = threading.Lock()
         self.conversation_history: list[dict] = []
 
     def is_expired(self) -> bool:
@@ -73,6 +79,22 @@ class SessionStore:
             if session is None:
                 return False
             session.schema = schema
+            session.touch()
+            return True
+
+    def set_sqlite(
+        self,
+        session_id: str,
+        conn: sqlite3.Connection,
+        sql_schema: str,
+    ) -> bool:
+        """Store the SQLite connection and pre-built schema prompt string."""
+        with self._sessions_lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return False
+            session.sqlite_conn = conn
+            session.sql_schema = sql_schema
             session.touch()
             return True
 

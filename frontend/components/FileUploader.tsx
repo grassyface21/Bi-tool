@@ -144,7 +144,7 @@ export default function FileUploader({ onSuccess }: Props) {
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-sm text-red-400"
+          className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600"
         >
           <span className="shrink-0 mt-0.5">⚠</span>
           <span>{error}</span>

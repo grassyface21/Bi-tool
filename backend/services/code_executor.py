@@ -1,163 +1,135 @@
-import ast
 import json
 import logging
-import multiprocessing
-import time
+import re
+import sqlite3
+import threading
 from typing import Any
-
-import numpy as np
-import pandas as pd
-
-from config import CODE_EXECUTION_TIMEOUT, MAX_RESULT_ROWS
 
 logger = logging.getLogger(__name__)
 
-# Whitelisted top-level imports
-ALLOWED_IMPORTS = {"pandas", "numpy", "datetime", "json", "math", "re", "collections"}
+# ---------------------------------------------------------------------------
+# Security — only read-only SELECT queries are permitted
+# ---------------------------------------------------------------------------
 
-# Blacklisted names / builtins
-BLACKLISTED_NAMES = {
-    "os", "sys", "subprocess", "eval", "exec", "open", "__import__",
-    "compile", "globals", "locals", "vars", "dir", "getattr", "setattr",
-    "delattr", "hasattr", "importlib", "builtins", "socket", "requests",
-    "urllib", "http", "shutil", "pathlib", "pickle", "shelve",
-}
-
-
-class SecurityError(Exception):
-    pass
+_FORBIDDEN = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|ATTACH|DETACH)\b",
+    re.IGNORECASE,
+)
+_PRAGMA = re.compile(r"\bPRAGMA\b", re.IGNORECASE)
 
 
-def _validate_ast(code: str) -> None:
-    """Parse and walk AST to enforce security rules."""
+def _validate_sql(sql: str) -> str | None:
+    """
+    Return an error string if the SQL is not safe, else None.
+    Allows SELECT and WITH … SELECT (CTEs).
+    """
+    stripped = sql.strip().lstrip(";").strip()
+    first_word = stripped.split()[0].upper() if stripped.split() else ""
+    if first_word not in ("SELECT", "WITH"):
+        return "Only SELECT (or WITH … SELECT) queries are permitted."
+    if _FORBIDDEN.search(stripped):
+        return "Forbidden SQL keyword detected in query."
+    if _PRAGMA.search(stripped):
+        return "PRAGMA statements are not allowed."
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Core executor
+# ---------------------------------------------------------------------------
+
+def _run_single_query(
+    sql: str,
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> dict[str, Any]:
+    """Execute one validated SQL SELECT and return a typed result dict."""
+    sql = sql.strip().rstrip(";")
+
+    err = _validate_sql(sql)
+    if err:
+        return {"type": "error", "error": err}
+
     try:
-        tree = ast.parse(code)
-    except SyntaxError as e:
-        raise SyntaxError(f"Syntax error in generated code: {e}")
+        with lock:
+            cursor = conn.execute(sql)
+            description = cursor.description or []
+            columns = [d[0] for d in description]
+            rows = cursor.fetchall()
 
-    for node in ast.walk(tree):
-        # Block dangerous imports
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top_module = alias.name.split(".")[0]
-                if top_module not in ALLOWED_IMPORTS:
-                    raise SecurityError(f"Import not allowed: {alias.name}")
+        if not rows:
+            return {"type": "empty", "data": [], "columns": columns}
 
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                top_module = node.module.split(".")[0]
-                if top_module not in ALLOWED_IMPORTS:
-                    raise SecurityError(f"Import not allowed: {node.module}")
+        # Single cell → scalar (for metric queries)
+        if len(rows) == 1 and len(columns) == 1:
+            val = rows[0][0]
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return {"type": "scalar", "data": float(val)}
+            return {"type": "scalar", "data": val}
 
-        # Block dangerous name references
-        elif isinstance(node, ast.Name):
-            if node.id in BLACKLISTED_NAMES:
-                raise SecurityError(f"Forbidden reference: {node.id}")
+        # Multiple rows/columns → tabular result
+        records: list[dict] = []
+        for row in rows:
+            record: dict = {}
+            for col, val in zip(columns, row):
+                # Ensure every value is JSON-serialisable
+                if isinstance(val, (int, float, str, bool)) or val is None:
+                    record[col] = val
+                else:
+                    record[col] = str(val)
+            records.append(record)
 
-        # Block attribute access that starts with dunder
-        elif isinstance(node, ast.Attribute):
-            if node.attr.startswith("__") and node.attr.endswith("__"):
-                raise SecurityError(f"Dunder attribute access not allowed: {node.attr}")
+        return {
+            "type": "dataframe",
+            "data": records,
+            "columns": columns,
+            "row_count": len(records),
+        }
 
-
-def _execute_in_subprocess(
-    code: str,
-    dataframes_serialized: dict[str, str],
-    result_queue: multiprocessing.Queue,
-) -> None:
-    """Worker function that runs inside a subprocess."""
-    try:
-        import io
-        import json
-        import pandas as pd
-        import numpy as np
-
-        # Reconstruct DataFrames
-        namespace: dict[str, Any] = {}
-        for name, json_str in dataframes_serialized.items():
-            df = pd.read_json(io.StringIO(json_str), orient="records")
-            namespace[name] = df
-
-        # Execute code
-        exec(code, {"pd": pd, "np": np, "json": json, **namespace})  # noqa: S102
-
-        result = namespace.get("result")
-
-        # Serialize result
-        if isinstance(result, pd.DataFrame):
-            if len(result) > 10000:
-                truncated = True
-                result = result.head(10000)
-            else:
-                truncated = False
-            result_queue.put({
-                "type": "dataframe",
-                "data": result.to_dict(orient="records"),
-                "columns": list(result.columns),
-                "truncated": truncated,
-                "total_rows": len(result) + (result.shape[0] if not truncated else 0),
-            })
-        elif isinstance(result, pd.Series):
-            result_queue.put({
-                "type": "series",
-                "data": result.to_dict(),
-                "name": result.name,
-            })
-        elif isinstance(result, (dict, list)):
-            result_queue.put({"type": "raw", "data": result})
-        elif isinstance(result, (int, float, np.integer, np.floating)):
-            result_queue.put({"type": "scalar", "data": float(result)})
-        elif result is None:
-            result_queue.put({"type": "none", "data": None})
-        else:
-            result_queue.put({"type": "raw", "data": str(result)})
-
+    except sqlite3.OperationalError as e:
+        return {"type": "error", "error": f"SQL error: {e}"}
     except Exception as e:
-        result_queue.put({"type": "error", "error": str(e)})
-
-
-def execute_pandas_code(code: str, dataframes: dict[str, pd.DataFrame]) -> dict[str, Any]:
-    """
-    Validate and execute pandas code in a sandboxed subprocess.
-    Returns a result dict with type and data.
-    """
-    # Step 1: AST security validation
-    try:
-        _validate_ast(code)
-    except SecurityError as e:
-        logger.warning(f"Security violation blocked: {e}")
-        return {"type": "error", "error": f"Security error: {e}"}
-    except SyntaxError as e:
         return {"type": "error", "error": str(e)}
 
-    # Step 2: Serialize DataFrames for subprocess
-    dataframes_serialized: dict[str, str] = {}
-    for name, df in dataframes.items():
-        try:
-            dataframes_serialized[name] = df.head(MAX_RESULT_ROWS).to_json(
-                orient="records", date_format="iso", default_handler=str
-            )
-        except Exception as e:
-            return {"type": "error", "error": f"Failed to serialize DataFrame '{name}': {e}"}
 
-    # Step 3: Run in subprocess with timeout
-    result_queue: multiprocessing.Queue = multiprocessing.Queue()
-    proc = multiprocessing.Process(
-        target=_execute_in_subprocess,
-        args=(code, dataframes_serialized, result_queue),
-        daemon=True,
-    )
-    proc.start()
-    proc.join(timeout=CODE_EXECUTION_TIMEOUT)
+# ---------------------------------------------------------------------------
+# Public API — handles single string OR list of strings
+# ---------------------------------------------------------------------------
 
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=5)
-        logger.warning("Code execution timed out")
-        return {"type": "error", "error": f"Code execution timed out after {CODE_EXECUTION_TIMEOUT} seconds"}
+def execute_sql_query(
+    sql_query: str | list[str],
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> dict[str, Any]:
+    """
+    Execute one or more SQL SELECT statements.
 
-    if result_queue.empty():
-        return {"type": "error", "error": "Code execution produced no result"}
+    - Single string  → result keyed as "__default__"
+    - List of strings → results keyed as "__0__", "__1__", …
 
-    result = result_queue.get_nowait()
-    return result
+    Returns:
+        {
+          "results": {
+              "__default__": { "type": ..., "data": ... },
+              # OR "__0__", "__1__", …
+          },
+          "has_error": bool,
+        }
+    """
+    if isinstance(sql_query, str):
+        result = _run_single_query(sql_query, conn, lock)
+        return {
+            "results": {"__default__": result},
+            "has_error": result["type"] == "error",
+        }
+
+    # List of queries (for dashboards with multiple data needs)
+    results: dict[str, Any] = {}
+    has_error = False
+    for i, sql in enumerate(sql_query):
+        r = _run_single_query(sql, conn, lock)
+        results[f"__{i}__"] = r
+        if r["type"] == "error":
+            has_error = True
+
+    return {"results": results, "has_error": has_error}

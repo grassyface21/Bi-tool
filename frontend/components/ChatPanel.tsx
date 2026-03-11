@@ -120,7 +120,7 @@ export default function ChatPanel({
           {/* Master Chat Input Box (Removed focus-within glow) */}
           <form 
             onSubmit={handleSubmit}
-            className="relative flex flex-col bg-surface border border-border rounded-2xl p-3 transition-colors duration-200 shadow-lg shadow-black/20"
+            className="relative flex flex-col bg-surface border border-border rounded-2xl p-3 transition-colors duration-200 shadow-lg shadow-gray-200"
           >
             {/* Uploaded File Chips */}
             {(uploadedFiles.length > 0 || isUploadingFiles) && (

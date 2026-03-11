@@ -8,12 +8,12 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        bg: '#0a0b0f',
-        surface: '#111318',
-        accent: '#e8ff47',
-        text: '#f0f2f8',
-        muted: '#7a8099',
-        border: '#1f2937',
+        bg: '#f5f7fa',
+        surface: '#ffffff',
+        accent: '#6366f1',
+        text: '#111827',
+        muted: '#6b7280',
+        border: '#e5e7eb',
       },
       fontFamily: {
         heading: ['Bebas Neue', 'sans-serif'],

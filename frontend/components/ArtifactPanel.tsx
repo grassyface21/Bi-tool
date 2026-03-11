@@ -41,9 +41,7 @@ const ArtifactPanel = forwardRef<ArtifactPanelRef>(function ArtifactPanel(_, ref
     <div
       className={[
         'flex flex-col bg-surface border-l border-border',
-        'transition-all duration-300 ease-out',
-        isFullscreen ? 'fixed inset-0 z-50' : 'relative h-full',
-        isFullscreen ? 'w-full' : 'w-full md:w-1/2',
+        isFullscreen ? 'fixed inset-0 z-50 w-full' : 'relative h-full w-full',
         'animate-slide-in',
       ].join(' ')}
       role="region"

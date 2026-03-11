@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ArtifactPanel from '@/components/ArtifactPanel'
 import ChatPanel from '@/components/ChatPanel'
 import { sendQuery, uploadFiles, SessionExpiredError } from '@/lib/api'
@@ -16,6 +16,38 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false)
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [artifactOpen, setArtifactOpen] = useState(false)
+
+  // Resizable split — chat panel width as a percentage (clamped 25 – 75)
+  const [chatWidthPct, setChatWidthPct] = useState(50)
+  const isDragging = useRef(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const handleDividerMouseDown = useCallback(() => {
+    isDragging.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const pct = ((e.clientX - rect.left) / rect.width) * 100
+      setChatWidthPct(Math.min(Math.max(pct, 25), 75))
+    }
+    const onMouseUp = () => {
+      if (!isDragging.current) return
+      isDragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
 
   const artifactPanelRef = useRef<ArtifactPanelRef>(null)
 
@@ -55,7 +87,7 @@ export default function Home() {
             content: {
               output_type: 'text',
               render_mode: 'chat',
-              aggregation_code: null,
+              sql_query: null,
               chat_message: 'Please attach a data file (CSV or XLSX) using the paperclip icon below before asking a question.',
               artifact: null,
               insight: '',
@@ -93,7 +125,7 @@ export default function Home() {
           content: {
             output_type: 'text',
             render_mode: 'chat',
-            aggregation_code: null,
+            sql_query: null,
             chat_message: e instanceof Error ? e.message : 'Something went wrong. Please try again.',
             artifact: null,
             insight: '',
@@ -153,19 +185,18 @@ export default function Home() {
       </header>
 
       {sessionError && (
-        <div role="alert" className="flex items-center justify-center gap-2 bg-red-500/10 border-b border-red-500/20 px-6 py-3 text-sm text-red-400">
+        <div role="alert" className="flex items-center justify-center gap-2 bg-red-50 border-b border-red-200 px-6 py-3 text-sm text-red-600">
           <span>⚠</span>
           <span>{sessionError}</span>
         </div>
       )}
 
-      <main className="flex flex-1 overflow-hidden">
+      <main ref={containerRef} className="flex flex-1 overflow-hidden">
         {/* Chat Side */}
-        <div className={[
-          'flex flex-col h-full transition-all duration-300 ease-in-out bg-bg relative',
-          artifactOpen ? 'w-full md:w-1/2 border-r border-border' : 'w-full',
-        ].join(' ')}>
-          
+        <div
+          className="flex flex-col h-full bg-bg relative overflow-hidden"
+          style={{ width: artifactOpen ? `${chatWidthPct}%` : '100%' }}
+        >
           {/* Schema Summary Pill */}
           {schema && (
             <div className="px-4 py-2 border-b border-border bg-surface/30 shrink-0 flex justify-center z-10">
@@ -194,9 +225,32 @@ export default function Home() {
           />
         </div>
 
+        {/* Draggable Divider */}
+        {artifactOpen && (
+          <div
+            onMouseDown={handleDividerMouseDown}
+            className="w-[5px] shrink-0 cursor-col-resize bg-border hover:bg-accent/40 active:bg-accent/60 transition-colors duration-150 relative group z-10"
+            title="Drag to resize"
+            role="separator"
+            aria-orientation="vertical"
+          >
+            {/* Three-dot grip indicator */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-[4px]">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="w-[3px] h-[3px] rounded-full bg-muted group-hover:bg-accent transition-colors duration-150" />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Artifact Side */}
         {artifactOpen && (
-          <ArtifactPanel ref={artifactPanelRef} />
+          <div
+            className="flex flex-col h-full overflow-hidden"
+            style={{ width: `${100 - chatWidthPct}%` }}
+          >
+            <ArtifactPanel ref={artifactPanelRef} />
+          </div>
         )}
       </main>
     </div>

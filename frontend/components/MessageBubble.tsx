@@ -34,7 +34,7 @@ function AssistantContent({
 
       {/* Execution error */}
       {response.execution_error && (
-        <p className="text-xs text-red-400 bg-red-500/10 rounded px-3 py-2">
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
           ⚠ Code execution error: {response.execution_error}
         </p>
       )}

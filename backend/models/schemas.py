@@ -8,8 +8,8 @@ class ColumnInfo(BaseModel):
     semantic_type: Literal["categorical", "numeric", "datetime", "text"]
     null_percentage: float
     unique_count: int
-    numeric_stats: Optional[dict] = None  # min, max, mean
-    top_values: Optional[list] = None     # top 5 categorical values
+    numeric_stats: Optional[dict] = None
+    top_values: Optional[list] = None
     sample_values: list = []
 
 
@@ -40,7 +40,7 @@ class ArtifactContent(BaseModel):
 class QueryResponse(BaseModel):
     output_type: Literal["metric", "text", "table", "chart", "dashboard", "followup"]
     render_mode: Literal["chat", "artifact"]
-    aggregation_code: Optional[str] = None
+    sql_query: Optional[Any] = None          # str | list[str] | None
     chat_message: str
     artifact: Optional[ArtifactContent] = None
     insight: str

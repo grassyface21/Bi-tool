@@ -25,11 +25,7 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-border rounded-full;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-muted;
+    @apply bg-border rounded-full hover:bg-muted;
   }
 }
 

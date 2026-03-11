@@ -35,7 +35,7 @@ export interface ArtifactContent {
 export interface QueryResponse {
   output_type: 'metric' | 'text' | 'table' | 'chart' | 'dashboard' | 'followup'
   render_mode: 'chat' | 'artifact'
-  aggregation_code: string | null
+  sql_query: string | string[] | null
   chat_message: string
   artifact: ArtifactContent | null
   insight: string

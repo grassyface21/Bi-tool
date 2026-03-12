@@ -158,7 +158,7 @@ export default function Home() {
   // The empty state without fixed top margins, ready to be flex-centered
   const emptyStateNode = (
     <div className="flex flex-col items-center justify-center animate-fade-in mb-8">
-      <div className="w-16 h-16 bg-surface border border-border rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-accent/5">
+      <div className="w-16 h-16 bg-surface border border-border rounded-2xl flex items-center justify-center mb-6 shadow-sm">
          <span className="text-3xl">✨</span>
       </div>
       <h2 className="font-heading text-3xl md:text-4xl text-text mb-4 text-center">What data are we analysing today?</h2>
@@ -170,7 +170,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-screen bg-bg">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-border shadow-sm bg-surface shrink-0 z-10">
         <div className="flex items-center gap-3">
           <h1 className="font-heading text-2xl text-accent tracking-wider">BI TOOL</h1>
         </div>
@@ -199,7 +199,7 @@ export default function Home() {
         >
           {/* Schema Summary Pill */}
           {schema && (
-            <div className="px-4 py-2 border-b border-border bg-surface/30 shrink-0 flex justify-center z-10">
+            <div className="px-4 py-2 border-b border-border bg-bg shrink-0 flex justify-center z-10">
               <div className="flex flex-wrap gap-x-4 gap-y-1 justify-center max-w-3xl w-full">
                 {Object.entries(schema).map(([key, info]) => (
                   <span key={key} className="text-xs text-muted">

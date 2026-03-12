@@ -16,41 +16,47 @@
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-bg;
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-border rounded-full hover:bg-muted;
+    @apply bg-border rounded-full;
+    transition: background 0.2s;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted;
   }
 }
 
 @layer components {
   .btn-primary {
-    @apply bg-accent text-bg font-medium px-4 py-2 rounded-lg
-           hover:bg-opacity-90 transition-all duration-200
-           disabled:opacity-40 disabled:cursor-not-allowed
-           focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-bg;
+    @apply bg-accent text-white font-medium px-4 py-2 rounded-lg
+           hover:bg-indigo-500 transition-all duration-200
+           shadow-sm hover:shadow-md
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none
+           focus:outline-none focus:ring-2 focus:ring-accent/50 focus:ring-offset-2 focus:ring-offset-bg;
   }
 
   .btn-ghost {
-    @apply text-muted hover:text-text hover:bg-surface px-3 py-1.5 rounded-lg
-           transition-all duration-200 text-sm
+    @apply text-muted hover:text-text hover:bg-border/60 px-3 py-1.5 rounded-lg
+           transition-all duration-150 text-sm
            focus:outline-none focus:ring-2 focus:ring-border focus:ring-offset-1 focus:ring-offset-bg;
   }
 
   .card {
-    @apply bg-surface rounded-xl border border-border;
+    @apply bg-surface rounded-xl border border-border shadow-sm;
   }
 
   .input-base {
     @apply bg-surface border border-border rounded-lg px-4 py-2.5
            text-text placeholder-muted
-           focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent
+           focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40
            transition-all duration-200;
   }
 }

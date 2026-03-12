@@ -48,7 +48,7 @@ const ArtifactPanel = forwardRef<ArtifactPanelRef>(function ArtifactPanel(_, ref
       aria-label="Artifact panel"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-accent text-sm">◈</span>
           <h2

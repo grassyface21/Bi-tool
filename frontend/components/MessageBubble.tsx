@@ -46,7 +46,7 @@ function AssistantContent({
             onViewArtifact?.(response.artifact!.content, response.chat_message)
           }
           className="self-start flex items-center gap-1.5 text-sm font-medium text-accent
-                     hover:text-accent/80 transition-colors"
+                     hover:text-indigo-500 underline underline-offset-2 transition-colors"
           aria-label="View artifact visualization"
         >
           <span>→</span>
@@ -56,7 +56,7 @@ function AssistantContent({
 
       {/* Insight */}
       {response.insight && (
-        <p className="text-sm text-muted italic border-l-2 border-accent/40 pl-3 leading-relaxed">
+        <p className="text-sm text-muted italic border-l-2 border-accent/30 pl-3 leading-relaxed bg-accent/5 py-1.5 rounded-r-md">
           {response.insight}
         </p>
       )}
@@ -75,7 +75,7 @@ const MessageBubble = memo(function MessageBubble({ message, onViewArtifact }: P
     return (
       <div className="flex justify-end animate-fade-in">
         <div className="max-w-[75%] flex flex-col items-end gap-1">
-          <div className="bg-accent text-bg rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm font-medium">
+          <div className="bg-accent text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm font-medium shadow-sm">
             {typeof message.content === 'string' ? message.content : ''}
           </div>
           <span className="text-xs text-muted">{time}</span>
@@ -90,7 +90,7 @@ const MessageBubble = memo(function MessageBubble({ message, onViewArtifact }: P
   return (
     <div className="flex justify-start animate-fade-in">
       <div className="max-w-[85%] flex flex-col gap-1">
-        <div className="card px-4 py-3 rounded-2xl rounded-tl-sm text-sm">
+        <div className="card px-4 py-3 rounded-2xl rounded-tl-sm text-sm shadow-sm">
           {response ? (
             <AssistantContent response={response} onViewArtifact={onViewArtifact} />
           ) : (

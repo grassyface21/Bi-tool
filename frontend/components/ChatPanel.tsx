@@ -107,9 +107,9 @@ export default function ChatPanel({
                   key={i}
                   onClick={() => { onSendMessage(q) }}
                   disabled={isLoading}
-                  className="text-xs px-4 py-2 rounded-full border border-border bg-surface/50
-                             text-muted hover:text-text hover:border-accent/40
-                             transition-all duration-200 disabled:opacity-50"
+                  className="text-xs px-4 py-2 rounded-full border border-border bg-surface
+                             text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/5
+                             transition-all duration-150 disabled:opacity-50"
                 >
                   {q}
                 </button>
@@ -120,7 +120,7 @@ export default function ChatPanel({
           {/* Master Chat Input Box (Removed focus-within glow) */}
           <form 
             onSubmit={handleSubmit}
-            className="relative flex flex-col bg-surface border border-border rounded-2xl p-3 transition-colors duration-200 shadow-lg shadow-gray-200"
+            className="relative flex flex-col bg-surface border border-border rounded-2xl p-3 transition-all duration-200 shadow-sm focus-within:shadow-md focus-within:border-accent/30"
           >
             {/* Uploaded File Chips */}
             {(uploadedFiles.length > 0 || isUploadingFiles) && (

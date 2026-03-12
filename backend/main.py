@@ -51,10 +51,13 @@ _DARK_TO_LIGHT: list[tuple[str, str]] = [
     # borders
     ("#1f2937", "#e5e7eb"),
     ("#2a2f3d", "#e5e7eb"),
-    # shadows
-    ("rgba(0,0,0,.4)", "rgba(0,0,0,.07)"),
-    ("rgba(0,0,0,0.4)", "rgba(0,0,0,0.07)"),
-    ("rgba(0,0,0,.6)", "rgba(0,0,0,.10)"),
+    # shadows — strip completely
+    ("rgba(0,0,0,.4)", "rgba(0,0,0,0)"),
+    ("rgba(0,0,0,0.4)", "rgba(0,0,0,0)"),
+    ("rgba(0,0,0,.6)", "rgba(0,0,0,0)"),
+    ("rgba(0,0,0,.08)", "rgba(0,0,0,0)"),
+    ("rgba(0,0,0,0.08)", "rgba(0,0,0,0)"),
+    ("rgba(0,0,0,.07)", "rgba(0,0,0,0)"),
 ]
 
 # Additional CSS block injected into <head> as a hard override
@@ -63,22 +66,67 @@ _LIGHT_THEME_CSS = """
   html, body {
     background: #f5f7fa !important;
     color: #111827 !important;
+    font-family: 'DM Sans', 'Inter', system-ui, sans-serif !important;
+    -webkit-font-smoothing: antialiased;
   }
-  /* Card surfaces */
-  .card, .kpi, [class*="card"], [class*="kpi"] {
+
+  /* ── Top-level card containers only ── */
+  .card, .kpi {
     background: #ffffff !important;
     border: 1px solid #e5e7eb !important;
-    box-shadow: 0 2px 12px rgba(0,0,0,.07) !important;
+    box-shadow: none !important;
+    border-radius: 12px !important;
   }
-  /* Ensure text on white cards is readable */
-  .kpi-label, [class*="label"] { color: #6b7280 !important; }
-  .kpi-value, [class*="value"] { color: #6366f1 !important; }
-  /* Chart grid lines */
+
+  /* ── No shadows anywhere ── */
+  * { box-shadow: none !important; }
+
+  /* ── Strip ALL borders/backgrounds from anything INSIDE a card/kpi ──
+       Kills the "input box" outlines the LLM puts on label/value/desc */
+  .card *, .kpi * {
+    border: none !important;
+    background: transparent !important;
+  }
+
+  /* ── KPI text colours (re-apply after the strip above) ── */
+  .kpi-label { color: #6b7280 !important; font-size: 11px !important; text-transform: uppercase; letter-spacing: .06em; }
+  .kpi-value { color: #6366f1 !important; font-family: 'DM Mono', monospace !important; }
+  .kpi-sub, .kpi-desc { color: #9ca3af !important; font-size: 12px !important; }
+
+  /* ── Headings and titles ── */
+  h1, h2, h3, h4, .title { color: #111827 !important; }
+
+  /* ── Charts ── */
   canvas { background: transparent !important; }
-  /* Table rows */
-  table { background: #ffffff !important; color: #111827 !important; }
-  th { background: #f3f4f6 !important; color: #6b7280 !important; }
-  td { border-color: #e5e7eb !important; color: #111827 !important; }
+
+  /* ── Tables ── */
+  table {
+    background: #ffffff !important;
+    color: #111827 !important;
+    border-collapse: collapse !important;
+    width: 100% !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 8px !important;
+    overflow: hidden !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,.05) !important;
+  }
+  th {
+    background: #f9fafb !important;
+    color: #6b7280 !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: .05em !important;
+    padding: 10px 14px !important;
+    border-bottom: 1px solid #e5e7eb !important;
+    border-right: none !important;
+  }
+  td {
+    color: #111827 !important;
+    padding: 10px 14px !important;
+    border-bottom: 1px solid #f3f4f6 !important;
+    border-right: none !important;
+  }
+  tr:last-child td { border-bottom: none !important; }
   tr:hover td { background: #f5f3ff !important; }
 </style>
 """

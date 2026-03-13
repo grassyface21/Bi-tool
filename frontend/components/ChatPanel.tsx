@@ -13,6 +13,7 @@ interface Props {
   uploadedFiles: string[]
   onSendMessage: (query: string) => void
   onFileUpload: (files: File[]) => void
+  onRemoveFile?: (index: number) => void
   onViewArtifact?: (content: string, title: string) => void
   emptyStateNode?: React.ReactNode
 }
@@ -26,6 +27,7 @@ export default function ChatPanel({
   uploadedFiles,
   onSendMessage,
   onFileUpload,
+  onRemoveFile,
   onViewArtifact,
   emptyStateNode
 }: Props) {
@@ -129,6 +131,20 @@ export default function ChatPanel({
                   <div key={i} className="flex items-center gap-2 bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text animate-fade-in">
                     <span className="text-accent">📄</span>
                     <span className="truncate max-w-[150px] font-medium">{file}</span>
+                    {onRemoveFile && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveFile(i)}
+                        disabled={isLoading || isUploadingFiles}
+                        className="ml-1 text-muted hover:text-text transition-colors disabled:opacity-40"
+                        aria-label={`Remove ${file}`}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <line x1="1" y1="1" x2="11" y2="11" />
+                          <line x1="11" y1="1" x2="1" y2="11" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 ))}
                 {isUploadingFiles && (

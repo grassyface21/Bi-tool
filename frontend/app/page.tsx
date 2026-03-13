@@ -10,6 +10,7 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [uploadedFiles, setUploadedFiles] = useState<string[]>([])
+  const [fileObjects, setFileObjects] = useState<File[]>([])
   const [schema, setSchema] = useState<Record<string, DataFrameSchema> | null>(null)
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -51,11 +52,12 @@ export default function Home() {
 
   const artifactPanelRef = useRef<ArtifactPanelRef>(null)
 
-  const handleFileUpload = async (files: File[]) => {
+  const doUpload = async (allFiles: File[]) => {
     setIsUploading(true)
     setSessionError(null)
     try {
-      const response = await uploadFiles(files)
+      const response = await uploadFiles(allFiles)
+      setFileObjects(allFiles)
       setSessionId(response.session_id)
       setUploadedFiles(response.files_processed)
       setSchema(response.schema_summary)
@@ -66,6 +68,22 @@ export default function Home() {
     } finally {
       setIsUploading(false)
     }
+  }
+
+  const handleFileUpload = async (newFiles: File[]) => {
+    // Merge with already-uploaded files (deduplicate by name)
+    const existingNames = new Set(fileObjects.map((f) => f.name))
+    const merged = [...fileObjects, ...newFiles.filter((f) => !existingNames.has(f.name))]
+    await doUpload(merged)
+  }
+
+  const handleRemoveFile = async (index: number) => {
+    const remaining = fileObjects.filter((_, i) => i !== index)
+    if (remaining.length === 0) {
+      handleReset()
+      return
+    }
+    await doUpload(remaining)
   }
 
   const handleSendQuery = async (query: string) => {
@@ -148,6 +166,7 @@ export default function Home() {
     setSessionId(null)
     setMessages([])
     setUploadedFiles([])
+    setFileObjects([])
     setSchema(null)
     setSuggestedQuestions([])
     setSessionError(null)
@@ -220,6 +239,7 @@ export default function Home() {
             uploadedFiles={uploadedFiles}
             onSendMessage={handleSendQuery}
             onFileUpload={handleFileUpload}
+            onRemoveFile={handleRemoveFile}
             onViewArtifact={handleViewArtifact}
             emptyStateNode={emptyStateNode}
           />
